@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flet-win-effects"
+version = "0.2.0"
+description = "Acrylic glass + frameless + rounded corners for Flet windows on Windows (ctypes only)"
+readme = "flet_win_effects/README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "XiangFu" }]
+keywords = ["flet", "windows", "acrylic", "frameless", "blur", "dwm"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Software Development :: User Interfaces",
+]
+# 组件本身零运行时依赖：只用 ctypes / sys / time。
+# Demo（app.py）需要 flet，但那不是这个包的事，见 requirements.txt。
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/5y2znfz2df-del/floating-pomodoro"
+Issues = "https://github.com/5y2znfz2df-del/floating-pomodoro/issues"
+
+[tool.setuptools]
+packages = ["flet_win_effects"]
+
+[tool.setuptools.package-data]
+flet_win_effects = ["README.md"]

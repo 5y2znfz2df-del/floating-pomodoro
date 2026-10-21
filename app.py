@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import flet as ft
 
-import win_effects
+import flet_win_effects as win_effects   # 窗口特效组件，见 flet_win_effects/
 
 # --------------------------------------------------------------------------- #
 # 常量
