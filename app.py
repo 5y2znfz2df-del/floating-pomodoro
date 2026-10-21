@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -50,12 +51,14 @@ APP_TITLE = "番茄钟"
 WINDOW_W, WINDOW_H = 250, 286
 STRIP_VISIBLE = 10       # 收起后露在屏幕内的宽度（窗口最小宽度受 Flutter 限制，只能推出屏幕）
 STRIP_H = 96            # 收起后的高度
+BAND_H = 3              # 顶部不穿透的拖动条高度（逻辑像素）
+BAND_POLL_MS = 40       # 穿透模式下光标轮询间隔
 
 FOCUS_MIN, FOCUS_MAX = 1, 120
 BREAK_MIN, BREAK_MAX = 1, 60
 
 TICK = 0.25          # 计时刷新间隔（秒）
-IDLE_SECONDS = 5.0   # 多久没操作就收起
+IDLE_SECONDS = float(os.environ.get("POMODORO_IDLE_SECONDS", "5"))   # 多久没操作就收起
 IDLE_POLL = 0.4      # 闲置检测轮询间隔
 
 # 收起 / 展开的动画参数
@@ -166,6 +169,42 @@ def _screen_size() -> tuple[int, int]:
         return 1280, 720
 
 
+def _cursor_pos() -> tuple[int, int]:
+    """当前鼠标位置，坐标空间和 win_effects.window_rect() 一致。"""
+    try:
+        import ctypes
+
+        point = ctypes.wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
+        return int(point.x), int(point.y)
+    except Exception:  # noqa: BLE001
+        return 0, 0
+
+
+def _foreground_window() -> int:
+    try:
+        import ctypes
+
+        return int(ctypes.windll.user32.GetForegroundWindow())
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _key_down(vk: int) -> bool:
+    """某个虚拟键是否按下过。
+
+    两个位都要看：``0x8000`` 是当前按住，``0x0001`` 是「上次查询之后按下过」。
+    只查前者会漏掉快速敲击（按下到松开可能只有几毫秒，轮询间隔 50ms 抓不到）。
+    """
+    try:
+        import ctypes
+
+        state = ctypes.windll.user32.GetAsyncKeyState(vk)
+        return bool(state & 0x8000) or bool(state & 0x0001)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def _maybe_await(value):
     """Flet 不同小版本里窗口方法时而是协程，统一兼容。"""
     if inspect.isawaitable(value):
@@ -213,6 +252,11 @@ class PomodoroApp:
         self._strip_side = "right"   # 收起时贴哪边："left" / "right"
         self._strip_top = 0          # 收起态的目标纵向位置
         self._strip_left = 0         # 收起态的目标横向位置
+        self.click_through = False   # 是否处于穿透模式
+        self.locked = False          # 是否锁定（禁止拖动）
+        self._band_hot = False       # 光标是否正在顶部拖动条上
+        self._dpi_scale = 1.0        # 物理像素 / 逻辑像素，挂上特效后测出来
+        self._hwnd = 0               # 本窗口句柄，挂上特效后拿到
         self.last_active = time.monotonic()
         self._saved_geom: tuple = ()
         self._task: asyncio.Task | None = None
@@ -220,8 +264,11 @@ class PomodoroApp:
         self._build_ui()
         self._apply_theme()
         self.reset_timer()
+        self.page.on_keyboard_event = self._on_key
         self.page.run_task(self._idle_watch)
         self.page.run_task(self._apply_glass)
+        self.page.run_task(self._watch_band)
+        self.page.run_task(self._watch_hotkey)
 
     # ------------------------------------------------------------- 玻璃外壳 --
     async def _apply_glass(self) -> None:
@@ -229,6 +276,15 @@ class PomodoroApp:
         await asyncio.sleep(1.2)
         info = win_effects.apply_glass(APP_TITLE, tint=(18, 18, 20), alpha=132)
         print(f"[pomodoro] glass = {info}", flush=True)
+        self._hwnd = info.get("hwnd") or 0
+        # 纯展示窗口，去掉输入法关联，否则按 P 会弹中文候选框
+        if self._hwnd:
+            win_effects.disable_ime(self._hwnd)
+
+        # 量一下物理/逻辑像素比：穿透模式下判断光标是否落在 3px 拖动条里要用
+        rect = win_effects.window_rect(APP_TITLE)
+        if rect and rect[3]:
+            self._dpi_scale = rect[3] / float(WINDOW_H)
 
     # ------------------------------------------------------------------ UI --
     def _build_ui(self) -> None:
@@ -245,6 +301,7 @@ class PomodoroApp:
         win.resizable = False
         win.frameless = True
         win.always_on_top = True
+        win.min_height = STRIP_H    # 保证顶部 3px 拖动条永远存在（收起时也不会低于它）
 
         # --- 标题栏 ---
         self.title_text = ft.Text(APP_TITLE, size=11, weight=ft.FontWeight.W_600)
@@ -261,16 +318,35 @@ class PomodoroApp:
             tooltip="关闭", on_click=self.close_app,
         )
 
-        header = ft.WindowDragArea(
-            content=ft.Container(
-                content=ft.Row(
-                    [self.title_text, ft.Container(expand=True),
-                     self.pin_btn, self.theme_btn, self.close_btn],
-                    spacing=0,
-                ),
-                padding=ft.padding.only(left=12, right=2, top=2, bottom=0),
+        self.lock_btn = ft.IconButton(
+            icon=ft.Icons.LOCK_OPEN, icon_size=13, width=26, height=26,
+            tooltip="锁定窗口", on_click=self.toggle_lock,
+        )
+        self.through_btn = ft.IconButton(
+            icon=ft.Icons.TOUCH_APP, icon_size=13, width=26, height=26,
+            tooltip="开启穿透（鼠标穿过本窗口）", on_click=self.toggle_click_through,
+        )
+
+        # 只有左边这块（标题 + 空白）可以拖；右侧按钮必须留在 drag area 外面，
+        # 否则 WindowDragArea 会把点击吞掉，按钮点不动。
+        header = ft.Container(
+            content=ft.Row(
+                [
+                    ft.WindowDragArea(
+                        content=ft.Container(
+                            content=self.title_text,
+                            expand=True,
+                            alignment=ft.alignment.center_left,
+                        ),
+                        maximizable=False,
+                        expand=True,
+                    ),
+                    self.pin_btn, self.theme_btn, self.lock_btn,
+                    self.through_btn, self.close_btn,
+                ],
+                spacing=0,
             ),
-            maximizable=False,
+            padding=ft.padding.only(left=12, right=2, top=2, bottom=0),
         )
 
         self.phase_text = ft.Text("专注", size=11, weight=ft.FontWeight.W_500)
@@ -293,6 +369,8 @@ class PomodoroApp:
         self.break_row = self._stepper_row("休息", "break_", self.settings.break_)
         self.stat_text = ft.Text("本次完成 0 个番茄", size=10)
 
+        self.band_holder = ft.Container(content=self._build_band(), height=BAND_H)
+
         # 顶部一层极淡的渐变，模拟玻璃表面的高光
         self.sheen = ft.Container(
             height=44,
@@ -310,6 +388,8 @@ class PomodoroApp:
                 ft.Container(
                     content=ft.Column(
                         [
+                            # 顶部 3px 拖动条：穿透模式下唯一能接收鼠标的地方
+                            self.band_holder,
                             header,
                             ft.Container(
                                 content=ft.Column(
@@ -403,6 +483,8 @@ class PomodoroApp:
         self.pin_btn.icon_color = c["accent"] if self.pinned else c["sub"]
         self.theme_btn.icon_color = c["sub"]
         self.close_btn.icon_color = c["sub"]
+        self.lock_btn.icon_color = c["accent"] if self.locked else c["sub"]
+        self.through_btn.icon_color = c["sub"]
 
         self.progress.color = c["accent"]
         self.progress.bgcolor = c["bar_bg"]
@@ -419,6 +501,129 @@ class PomodoroApp:
         )
         self.page.window.always_on_top = self.pinned
         self.page.update()
+
+    # ------------------------------------------------------ 穿透 / 锁定 / 拖动条 --
+    def _build_band(self) -> ft.Control:
+        """顶部 3px 拖动条。
+
+        规则：常态下支持拖动；**锁定后去掉拖动**（此时穿透模式只能靠 P 键退出）。
+        """
+        self.band_line = ft.Container(
+            height=BAND_H,
+            bgcolor="#00000000",
+            border_radius=ft.border_radius.only(top_left=14, top_right=14),
+        )
+        detector = ft.GestureDetector(
+            content=self.band_line,
+            mouse_cursor=ft.MouseCursor.MOVE,   # 悬停显示拖动光标
+            on_enter=self._on_band_enter,
+            on_exit=self._on_band_exit,
+        )
+        if self.locked:
+            return detector
+        return ft.WindowDragArea(content=detector, maximizable=False)
+
+    def _on_band_enter(self, e=None) -> None:
+        """悬停：亮一条淡色提示线，告诉用户这里可以拖。"""
+        self._touch()
+        accent = self._palette()["accent"]
+        self.band_line.bgcolor = "#40" + accent[1:]
+        self.page.update()
+
+    def _on_band_exit(self, e=None) -> None:
+        self.band_line.bgcolor = "#00000000"
+        self.page.update()
+
+    async def toggle_lock(self, e=None) -> None:
+        self._touch()
+        self.locked = not self.locked
+        self.band_holder.content = self._build_band()
+        c = self._palette()
+        self.lock_btn.icon = ft.Icons.LOCK if self.locked else ft.Icons.LOCK_OPEN
+        self.lock_btn.icon_color = c["accent"] if self.locked else c["sub"]
+        self.lock_btn.tooltip = "解锁窗口（当前锁定）" if self.locked else "锁定窗口"
+        self.page.update()
+
+    async def toggle_click_through(self, e=None) -> None:
+        self._touch()
+        await self._set_click_through(not self.click_through)
+
+    async def _set_click_through(self, on: bool) -> None:
+        """真正切换穿透样式，并同步按钮可见性。"""
+        hwnd = win_effects.find_window(APP_TITLE, timeout=1.0)
+        if not hwnd:
+            return
+        if not win_effects.set_click_through(hwnd, on):
+            return
+        self.click_through = on
+        self._band_hot = False
+        # 规则 3a：开启按钮只在非穿透模式可见
+        self.through_btn.visible = not on
+        self.page.update()
+
+    def _on_key(self, e) -> None:
+        """规则 3b / 4：窗口有焦点时，P 切换穿透。
+
+        Flet 的 on_keyboard_event 只在 Flutter 内部有焦点控件时才会来事件，
+        本程序没有输入框，所以这条基本收不到；真正的实现是 _watch_hotkey()
+        的轮询。这里保留一份，某些平台/版本上它是有用的。
+        """
+        key = (getattr(e, "key", "") or "").lower()
+        if key == "p":
+            self.page.run_task(self.toggle_click_through)
+
+    async def _watch_hotkey(self) -> None:
+        """窗口在前台时，轮询 P 键切换穿透。
+
+        为什么不用 Flet 的键盘事件：桌面端只有 Flutter 里的输入控件拿到焦点时才会派发
+        键盘事件，本程序点空白处不产生焦点，按键永远收不到。GetAsyncKeyState 是全局状态，
+        再用 GetForegroundWindow 限定「只有本窗口在前台才响应」，等价于规则里的
+        「窗口处于焦点状态时按 P」。
+        """
+        was_down = False
+        while True:
+            await asyncio.sleep(0.05)
+            try:
+                if not self._hwnd or _foreground_window() != self._hwnd:
+                    was_down = False
+                    continue
+                down = _key_down(0x50)          # 'P'
+            except Exception:                   # noqa: BLE001
+                continue
+            if down and not was_down:
+                await self.toggle_click_through()
+            was_down = down
+
+    async def _watch_band(self) -> None:
+        """穿透模式下，光标进入顶部 3px 时临时关闭穿透，让拖动条能收到鼠标。
+
+        穿透是整窗生效的，没有「半透明命中」这种东西，所以只能靠轮询光标位置 +
+        临时切换样式，等价于「只有顶部 3px 不穿透」。锁定状态下完全不切换，
+        于是整窗连拖动条都点不到 —— 只剩 P 键能退出。
+        """
+        while True:
+            await asyncio.sleep(BAND_POLL_MS / 1000.0)
+            if not self.click_through or self.locked:
+                continue
+
+            rect = win_effects.window_rect(APP_TITLE)
+            if not rect:
+                continue
+
+            left, top = rect[0], rect[1]
+            width = rect[2]
+            band = BAND_H * self._dpi_scale
+            cx, cy = _cursor_pos()
+            hot = (left <= cx < left + width) and (top <= cy < top + band)
+
+            if hot == self._band_hot:
+                continue
+
+            hwnd = win_effects.find_window(APP_TITLE, timeout=0.3)
+            if not hwnd:
+                continue
+            win_effects.set_click_through(hwnd, not hot)
+            self._band_hot = hot
 
     # ------------------------------------------------------------ 闲置收起 --
     def _touch(self) -> None:

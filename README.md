@@ -74,6 +74,12 @@ Copy-Item flet_win_effects .\your_project\ -Recurse   # 2. 把包目录拷进项
 代码在 [`app.py`](app.py)，打包好的 89 MB 安装包在
 [Releases](https://github.com/5y2znfz2df-del/floating-pomodoro/releases)。
 
+**穿透模式**：点标题栏的 👆 图标，鼠标就完全穿过窗口，写代码/玩游戏不挡操作。
+顶部固定留 3px 不穿透，悬停会亮一条细线，按住即可拖动窗口。
+退出方式两种：窗口有焦点时按 `P`，或点开穿透前那个按钮（穿透时按钮自动隐藏）。
+
+**锁定**：点 🔒 锁定后禁止拖动；此时若还在穿透模式，**只剩 P 键**能退出。
+
 ---
 
 ## How it works
@@ -170,6 +176,14 @@ for i in range(1, steps + 1):
 
 **非 Windows** — `IS_WINDOWS` 为 `False`，所有函数返回 `False` / `None`，
 Flet 部分照常运行（只是没有特效）。
+
+**穿透模式下按 P 会弹输入法候选框** — `disable_ime()` 只能作用于本进程的窗口，
+跨进程（Flet 的窗口属于 `flet.exe`）解除 IME 关联会静默失败。快捷键本身仍然生效，
+只是中文输入法状态会顺带弹一下候选框。
+
+**Flet 的 `on_keyboard_event` 收不到按键** — 桌面端只有在 Flutter 里有可聚焦控件时
+才派发键盘事件，纯展示窗口点了空白处也不产生焦点。组件里没有绕这个的办法，
+demo 用 `GetAsyncKeyState` 轮询 + `GetForegroundWindow` 限定前台窗口来替代。
 
 ---
 

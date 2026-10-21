@@ -34,6 +34,9 @@ __all__ = [
     "enable_acrylic_state",
     "enable_rounded_corners",
     "set_backdrop",
+    "set_click_through",
+    "is_click_through",
+    "disable_ime",
     "apply_glass",
 ]
 
@@ -197,6 +200,123 @@ def make_frameless(hwnd: int) -> bool:
             wintypes.HWND(hwnd), None, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
+        return True
+    except Exception:
+        return False
+
+
+def set_click_through(hwnd: int, enabled: bool = True) -> bool:
+    """开启 / 关闭整窗鼠标穿透。
+
+    开启后所有鼠标事件直接落到下面的窗口，本窗口既不接收点击也不接收悬停。
+    做「悬浮挂件不挡操作」时用这个。
+
+    参数:
+        hwnd: 窗口句柄。
+        enabled: ``True`` 开启穿透，``False`` 关闭。
+
+    返回:
+        成功返回 ``True``，失败返回 ``False``。
+
+    失败行为:
+        静默返回 ``False``，窗口保持原状。
+
+    注意:
+        穿透是**整窗**生效，没有「部分穿透」。如果只想让主体穿透、留一条可拖动的边，
+        需要在调用方自己做「指针进入边缘 → 临时关闭穿透」的处理（见 README 的方案）。
+
+        实现上会同时置 ``WS_EX_LAYERED``——只加 ``WS_EX_TRANSPARENT`` 时，
+        多数情况下命中测试不会被跳过；关闭时只摘 ``WS_EX_TRANSPARENT``，
+        保留 ``WS_EX_LAYERED``（alpha 已设为 255，视觉无影响），避免反复切换导致重绘。
+
+    已验证:
+        Windows 11（10.0.28000）+ Flet 0.28 的 ANGLE 渲染窗口：
+        穿透后 ``WindowFromPoint`` 返回下层窗口，Flutter 画面未变黑。
+    """
+    if not IS_WINDOWS or not hwnd:
+        return False
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+        GWL_EXSTYLE = -20
+        WS_EX_LAYERED = 0x00080000
+        WS_EX_TRANSPARENT = 0x00000020
+        LWA_ALPHA = 0x00000002
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SWP_FRAMECHANGED = 0x0020
+
+        style = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
+        if enabled:
+            new_style = style | WS_EX_LAYERED | WS_EX_TRANSPARENT
+        else:
+            new_style = style & ~WS_EX_TRANSPARENT
+
+        if new_style != style:
+            user32.SetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE, new_style)
+            if enabled:
+                # 加了 WS_EX_LAYERED 必须给个 alpha，否则窗口可能整块不画
+                user32.SetLayeredWindowAttributes(wintypes.HWND(hwnd), 0, 255, LWA_ALPHA)
+            user32.SetWindowPos(
+                wintypes.HWND(hwnd), None, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            )
+        return True
+    except Exception:
+        return False
+
+
+def is_click_through(hwnd: int) -> bool:
+    """查询窗口当前是否处于穿透状态。
+
+    参数:
+        hwnd: 窗口句柄。
+
+    返回:
+        带 ``WS_EX_TRANSPARENT`` 返回 ``True``，否则 ``False``；读不到样式也返回 ``False``。
+
+    失败行为:
+        静默返回 ``False``。
+    """
+    if not IS_WINDOWS or not hwnd:
+        return False
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        WS_EX_TRANSPARENT = 0x00000020
+        style = user32.GetWindowLongW(wintypes.HWND(hwnd), -20)
+        return bool(style & WS_EX_TRANSPARENT)
+    except Exception:
+        return False
+
+
+def disable_ime(hwnd: int) -> bool:
+    """把输入法从窗口上摘掉。
+
+    纯展示型悬浮窗没有输入框，但窗口拿到焦点后按字母键仍会弹出输入法候选框
+    （尤其用 P 这类单键快捷键时很碍事）。这个调用把 IME 上下文解除关联。
+
+    参数:
+        hwnd: 窗口句柄。
+
+    返回:
+        成功返回 ``True``，失败返回 ``False``。
+
+    失败行为:
+        静默返回 ``False``，输入法保持原样。
+
+    注意:
+        解除后该窗口再也无法输入中文。只适合纯展示窗口；有输入框的应用别用。
+
+    已验证:
+        Windows 11（10.0.28000）+ 微软拼音：调用后按字母不再弹候选框。
+    """
+    if not IS_WINDOWS or not hwnd:
+        return False
+    try:
+        imm32 = ctypes.WinDLL("imm32")
+        imm32.ImmAssociateContext(wintypes.HWND(hwnd), None)
         return True
     except Exception:
         return False

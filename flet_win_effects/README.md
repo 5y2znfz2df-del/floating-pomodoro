@@ -89,6 +89,29 @@ Windows 的全屏独占模式（exclusive fullscreen）会抢走置顶层，`alw
 
 ---
 
+## 点击穿透（悬浮挂件必备）
+
+```python
+hwnd = flet_win_effects.find_window("My App")
+flet_win_effects.set_click_through(hwnd, True)    # 鼠标完全穿过窗口
+flet_win_effects.is_click_through(hwnd)           # -> True
+```
+
+穿透是**整窗**生效的，没有「部分穿透」。常见做法是留一条窄边当拖动条，
+靠轮询光标位置临时让出鼠标：
+
+```python
+# 光标进入顶部 3px → 关闭穿透（这一条能收到鼠标）；离开 → 重新打开
+rect = flet_win_effects.window_rect("My App")
+inside_band = rect[1] <= cursor_y < rect[1] + 3
+flet_win_effects.set_click_through(hwnd, not inside_band)
+```
+
+一定要留一个**逃生方式**，否则用户把自己锁死：窗口有焦点时按 `P` 切换，
+或提供一个只在非穿透状态可见的按钮（穿透后点不到任何东西）。
+
+---
+
 ## API
 
 | 函数 | 作用 | 失败时返回 |
@@ -102,6 +125,9 @@ Windows 的全屏独占模式（exclusive fullscreen）会抢走置顶层，`alw
 | `enable_acrylic_state(hwnd, state)` | 直接设 AccentState | `False` |
 | `enable_rounded_corners(hwnd)` | 窗口圆角（Win11） | `False` |
 | `set_backdrop(hwnd, kind=3)` | DWM backdrop（不推荐） | `False` |
+| `set_click_through(hwnd, True)` | 整窗鼠标穿透 | `False` |
+| `is_click_through(hwnd)` | 查询是否穿透 | `False` |
+| `disable_ime(hwnd)` | 解除输入法关联（纯展示窗口） | `False` |
 
 坐标说明：`window_rect()` 返回的是**逻辑像素**，和 Flet 的 `page.window.left/top`
 是同一个坐标系，可以直接互相赋值。
