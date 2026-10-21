@@ -24,3 +24,8 @@ dist/
 tools/*.log
 tools/*.err
 tools/*.png
+
+# 安装测试残留
+_itest*/
+_install*/
+_[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*
