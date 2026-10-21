@@ -360,15 +360,21 @@ namespace PomodoroSetup
         {
             report("正在安装到 " + _destDir, 3);
 
+            // 覆盖安装时旧进程可能还开着，先关掉，否则文件被占用会装失败
+            KillRunningApp(report);
+
             if (Directory.Exists(_destDir))
             {
                 report("检测到旧版本，正在移除…", 5);
-                try { Directory.Delete(_destDir, true); }
-                catch (Exception) { /* 文件被占用就继续覆盖 */ }
+                DeleteDirWithRetry();
             }
 
             Directory.CreateDirectory(_destDir);
             ExtractPayload(report);
+
+            // 解压完先自检：少了任何一项都说明包不完整，直接报清楚缺什么
+            report("正在检查运行时文件…", 94);
+            VerifyInstall();
 
             report("正在创建快捷方式…", 96);
             try
@@ -396,6 +402,124 @@ namespace PomodoroSetup
                 report("已安装，但自动启动失败，请手动打开：" + _targetExe, 100);
                 Thread.Sleep(1500);
             }
+        }
+
+        /// <summary>关掉正在运行的番茄钟（升级安装时文件会被占用）。</summary>
+        private static void KillRunningApp(Action<string, int> report)
+        {
+            try
+            {
+                // 主程序叫 Pomodoro，界面客户端叫 flet，两个都要关
+                var victims = new System.Collections.Generic.List<Process>();
+                foreach (string name in new[] { "Pomodoro", "flet" })
+                {
+                    foreach (Process p in Process.GetProcessesByName(name))
+                    {
+                        // 只动装在我们目录里的进程，避免误杀别的 Flet 应用
+                        string exePath = null;
+                        try { exePath = p.MainModule.FileName; }
+                        catch (Exception) { }
+
+                        bool ours = exePath == null
+                            ? name == "Pomodoro"
+                            : exePath.StartsWith(_destDir, StringComparison.OrdinalIgnoreCase);
+
+                        if (ours) victims.Add(p);
+                    }
+                }
+
+                if (victims.Count == 0) return;
+
+                report("检测到程序正在运行，正在关闭…", 4);
+                foreach (Process p in victims)
+                {
+                    try { p.Kill(); } catch (Exception) { }
+                }
+
+                // 等进程真正退出：Kill() 只是发出请求，句柄释放还要一点时间
+                var deadline = DateTime.Now.AddSeconds(6);
+                while (DateTime.Now < deadline && AliveCount() > 0)
+                    Thread.Sleep(200);
+
+                Thread.Sleep(300);
+            }
+            catch (Exception ex)
+            {
+                TryLog("关闭旧进程失败（继续安装）：" + ex.Message);
+            }
+        }
+
+        private static int AliveCount()
+        {
+            int count = 0;
+            foreach (string name in new[] { "Pomodoro", "flet" })
+            {
+                foreach (Process p in Process.GetProcessesByName(name))
+                {
+                    try
+                    {
+                        string exePath = p.MainModule.FileName;
+                        if (exePath.StartsWith(_destDir, StringComparison.OrdinalIgnoreCase))
+                            count++;
+                    }
+                    catch (Exception)
+                    {
+                        if (name == "Pomodoro") count++;
+                    }
+                }
+            }
+            return count;
+        }
+
+        /// <summary>删目录，文件被占用时重试几次。</summary>
+        private static void DeleteDirWithRetry()
+        {
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                try
+                {
+                    if (!Directory.Exists(_destDir)) return;
+                    Directory.Delete(_destDir, true);
+                    return;
+                }
+                catch (Exception)
+                {
+                    Thread.Sleep(500);
+                }
+            }
+        }
+
+        /// <summary>安装包自带 Python 运行时，这里确认关键文件都在，缺了直接报名字。</summary>
+        private static void VerifyInstall()
+        {
+            string[] required =
+            {
+                "Pomodoro.exe",
+                Path.Combine("_internal", "python312.dll"),
+                Path.Combine("_internal", "base_library.zip"),
+                Path.Combine("_internal", "flet_desktop", "app", "flet", "flet.exe"),
+            };
+
+            var missing = new System.Collections.Generic.List<string>();
+            foreach (string rel in required)
+            {
+                if (!File.Exists(Path.Combine(_destDir, rel)))
+                    missing.Add(rel);
+            }
+
+            if (missing.Count > 0)
+            {
+                string detail = string.Join("\r\n  ", missing.ToArray());
+                TryLog("安装包不完整，缺少：\r\n  " + detail);
+                throw new InvalidOperationException(
+                    "安装包不完整，缺少这些文件：\r\n  " + detail +
+                    "\r\n\r\n可能是下载不完整，或被安全软件删掉了。请重新下载安装包。");
+            }
+
+            // Windows 版本只影响毛玻璃效果，不影响运行，所以只记日志
+            Version v = Environment.OSVersion.Version;
+            if (v.Major < 10)
+                TryLog("当前系统是 Windows " + v.Major + "." + v.Minor + "，亚克力模糊不可用，界面会退回不透明样式。");
         }
 
         private static void ExtractPayload(Action<string, int> report)

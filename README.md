@@ -36,7 +36,21 @@
 ## 环境要求
 
 - Windows 10 / 11
-- Python 3.9+（开发与测试使用 3.12.10）
+- 开发需要 Python 3.9+（本项目用 3.12.10）
+
+> **最终用户不需要安装 Python**
+> 安装包是 PyInstaller `-D` 模式打出来的「冻结」程序，Python 解释器、标准库、
+> Flet/Flutter 运行时、VC++ 运行库全都打包在 `_internal\` 里（826 个文件 / 192 MB）：
+>
+> | 文件 | 作用 |
+> | --- | --- |
+> | `_internal\python312.dll` | Python 解释器本体 |
+> | `_internal\base_library.zip` | Python 标准库 |
+> | `_internal\vcruntime140.dll`、`msvcp140.dll`、`ucrtbase.dll` | C++ 运行库 |
+> | `_internal\flet_desktop\app\flet\flet.exe` + `flutter_windows.dll` | 界面运行时 |
+>
+> 装完之后直接双击就能用，不需要联网、不需要 pip、不需要 Python 环境。
+> 安装程序还会在解压后**逐个核对这些文件**，缺了会明确指出缺哪一个（见下方「安装」章节）。
 
 > **为什么锁 `flet==0.28.3`**
 > Flet 从 1.0 开始，桌面客户端不在 wheel 里了，改成首次运行时从 GitHub Releases
@@ -123,9 +137,14 @@ powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
 
 1. **让你选安装位置**（默认自动挑一个能写的目录，也可以点「浏览…」自选）
 2. 解压到目标目录，不需要管理员权限
-3. 在**桌面**和**开始菜单**建「悬浮番茄钟」快捷方式
-4. 在开始菜单建「卸载」
-5. 装完直接启动程序
+3. **核对自带运行时**：检查 `python312.dll`、`base_library.zip`、`flet.exe` 等关键文件，
+   缺了就明确报出缺哪一个（而不是装完闪退）
+4. 在**桌面**和**开始菜单**建「悬浮番茄钟」快捷方式
+5. 在开始菜单建「卸载」
+6. 装完直接启动程序
+
+> 覆盖安装时会先自动关掉正在运行的番茄钟（主程序 `Pomodoro` 和界面进程 `flet`），
+> 否则文件被占用会导致安装失败。
 
 ### 为什么不用 Inno Setup / NSIS
 
