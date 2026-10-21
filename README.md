@@ -246,12 +246,26 @@ python tests\test_logic.py
 或临时目录权限拦住了。解决办法：改用 `-D` 目录模式重新打包，或者把 exe 加进安全软件白名单。
 
 **安装时报「访问被拒绝」（对路径 `%LOCALAPPDATA%\Programs\Pomodoro` 的访问被拒绝）**
-安全软件拦住了这个未签名程序往用户目录写文件。三个办法：
+从 v1.0.2 起安装程序会**自动换目录重试**，依次尝试：
 
-1. 打开火绒 → 安全日志/拦截记录，找到这条拦截，选择**允许**，再装一次；
-2. 用 `installer\portable-install.cmd`（或 dist 里的 `一键安装.cmd`）—— 它走 cmd + PowerShell
-   复制文件，这两个是系统组件，不会被拦；
+```
+%LOCALAPPDATA%\Programs\Pomodoro
+%LOCALAPPDATA%\Pomodoro
+%APPDATA%\Pomodoro
+%USERPROFILE%\Pomodoro
+安装包所在目录\PomodoroApp
+```
+
+判定标准是「真的能建目录并写入文件」，所以哪怕 `Programs` 被锁住也会自动落到下一个。
+快捷方式始终指向实际安装到的位置。
+
+如果**全都**写不进去，会弹出完整清单。此时可以：
+
+1. 打开安全软件的拦截记录，允许一次再装；
+2. 用 `installer\portable-install.cmd`（或 dist 里的 `一键安装.cmd`）—— 走 cmd + PowerShell 复制文件；
 3. 干脆不装：直接双击 `Pomodoro\Pomodoro.exe`，绿色版不需要任何写入。
+
+安装日志会依次尝试写到 `%LOCALAPPDATA%`、安装包所在目录、`%TEMP%`，文件名为 `Pomodoro-Setup.log`。
 
 **双击 exe 闪一下就没了**
 用 `flet pack ... --debug-console debug` 重新打包，看控制台输出。多数是杀毒软件拦截或缺少 VC 运行库。

@@ -29,25 +29,39 @@ namespace PomodoroSetup
         private const string AppName = "悬浮番茄钟";
         private const string ResourceName = "payload.zip";
 
-        private static readonly string ProgramsDir =
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
+        // 安装位置候选。某些机器上 %LOCALAPPDATA%\Programs 会被安全软件/组策略锁住，
+        // 所以按顺序试，第一个能真正写进去的就用它。
+        private static readonly string[] CandidateDirs = BuildCandidates();
 
-        // 默认装到 %LOCALAPPDATA%\Programs\Pomodoro；
-        // 设置了 POMODORO_INSTALL_DIR 就装到指定目录（绿色安装 / 测试用）。
-        private static readonly string DestDir = ResolveDestDir();
+        private static string _destDir = "";
+        private static string _installRoot = "";
+        private static string _targetExe = "";
 
-        private static readonly string TargetExe = Path.Combine(DestDir, "Pomodoro.exe");
-
-        /// <summary>zip 里的顶层目录是 Pomodoro，所以解压到它的父目录。</summary>
-        private static readonly string InstallRoot =
-            Path.GetDirectoryName(DestDir.TrimEnd(Path.DirectorySeparatorChar)) ?? DestDir;
-
-        private static string ResolveDestDir()
+        private static string[] BuildCandidates()
         {
-            string custom = Environment.GetEnvironmentVariable("POMODORO_INSTALL_DIR");
-            if (!string.IsNullOrWhiteSpace(custom))
-                return Path.GetFullPath(custom);
-            return Path.Combine(ProgramsDir, "Pomodoro");
+            string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var list = new System.Collections.Generic.List<string>
+            {
+                Path.Combine(local, "Programs", "Pomodoro"),
+                Path.Combine(local, "Pomodoro"),
+                Path.Combine(roaming, "Pomodoro"),
+                Path.Combine(profile, "Pomodoro"),
+            };
+
+            // 最后再试「安装包所在的目录」：下载/桌面通常不会被锁
+            try
+            {
+                string here = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                if (!string.IsNullOrEmpty(here))
+                    list.Add(Path.Combine(here, "PomodoroApp"));
+            }
+            catch (Exception)
+            {
+                // 拿不到就算了
+            }
+            return list.ToArray();
         }
 
         private static Label _status;
@@ -67,8 +81,8 @@ namespace PomodoroSetup
                         Console.WriteLine(line);
                         TryLog(line);
                     });
-                    Console.WriteLine("安装完成：" + TargetExe);
-                    TryLog("安装完成：" + TargetExe);
+                    Console.WriteLine("安装完成：" + _targetExe);
+                    TryLog("安装完成：" + _targetExe);
                     return 0;
                 }
                 catch (Exception ex)
@@ -148,20 +162,31 @@ namespace PomodoroSetup
         }
 
         // -------------------------------------------------------------- install --
-        /// <summary>安装主体：解压、建快捷方式、写卸载器、启动程序。</summary>
+        /// <summary>安装主体：选目录、解压、建快捷方式、写卸载器、启动程序。</summary>
         private static void InstallCore(Action<string, int> report)
         {
-            report("正在安装到 " + DestDir, 0);
+            PickInstallDir(report);
+            report("正在安装到 " + _destDir, 5);
 
-            if (Directory.Exists(DestDir))
+            if (Directory.Exists(_destDir))
             {
-                report("检测到旧版本，正在移除…", 2);
-                try { Directory.Delete(DestDir, true); }
+                report("检测到旧版本，正在移除…", 6);
+                try { Directory.Delete(_destDir, true); }
                 catch (Exception) { /* 文件被占用就继续覆盖 */ }
             }
 
-            Directory.CreateDirectory(InstallRoot);
-            ExtractPayload(report);
+            try
+            {
+                Directory.CreateDirectory(_destDir);
+                ExtractPayload(report);
+            }
+            catch (Exception)
+            {
+                // 当前目录写不进去（权限/安全软件），清掉痕迹换下一个候选目录
+                try { if (Directory.Exists(_destDir)) Directory.Delete(_destDir, true); }
+                catch (Exception) { }
+                throw;
+            }
 
             report("正在创建快捷方式…", 96);
             try
@@ -178,7 +203,76 @@ namespace PomodoroSetup
 
             report("安装完成，正在启动…", 100);
             Thread.Sleep(300);
-            StartApp();
+
+            // 启动失败不代表安装失败：文件已经就位了，只是自动拉起没成功
+            try
+            {
+                StartApp();
+            }
+            catch (Exception ex)
+            {
+                TryLog("自动启动失败（不影响安装）：" + ex.Message);
+                report("已安装，但自动启动失败，请手动打开：" + _targetExe, 100);
+                Thread.Sleep(1500);
+            }
+        }
+
+        /// <summary>
+        /// 按候选顺序找一个真正能写入的目录。只判断「目录存在」不够，
+        /// 必须实际写一个文件才算数：有些机器上 %LOCALAPPDATA%\Programs
+        /// 会被安全软件或组策略锁住，建目录成功但写文件失败。
+        /// </summary>
+        private static void PickInstallDir(Action<string, int> report)
+        {
+            string custom = Environment.GetEnvironmentVariable("POMODORO_INSTALL_DIR");
+            if (!string.IsNullOrWhiteSpace(custom))
+            {
+                string forced = Path.GetFullPath(custom);
+                if (!CanWrite(forced))
+                    throw new UnauthorizedAccessException(
+                        "指定的安装目录不可写：" + forced);
+                _destDir = forced;
+                _installRoot = Path.GetDirectoryName(forced.TrimEnd(Path.DirectorySeparatorChar)) ?? forced;
+                _targetExe = Path.Combine(forced, "Pomodoro.exe");
+                return;
+            }
+
+            var failures = new System.Text.StringBuilder();
+            foreach (string candidate in CandidateDirs)
+            {
+                if (CanWrite(candidate))
+                {
+                    _destDir = candidate;
+                    _installRoot = Path.GetDirectoryName(candidate.TrimEnd(Path.DirectorySeparatorChar)) ?? candidate;
+                    _targetExe = Path.Combine(candidate, "Pomodoro.exe");
+                    if (failures.Length > 0)
+                        TryLog("前面这些目录不可写，已跳过：\r\n" + failures);
+                    return;
+                }
+                failures.AppendLine("  ✗ " + candidate);
+                TryLog("目录不可写：" + candidate);
+            }
+
+            throw new UnauthorizedAccessException(
+                "这些目录都写不进去：\r\n" + failures +
+                "\r\n请检查安全软件的拦截记录，或右键以管理员身份运行。");
+        }
+
+        /// <summary>真的建一次目录并写一个临时文件，确认有写权限。</summary>
+        private static bool CanWrite(string dir)
+        {
+            try
+            {
+                Directory.CreateDirectory(dir);
+                string probe = Path.Combine(dir, ".write-probe");
+                File.WriteAllText(probe, "ok");
+                File.Delete(probe);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static void ExtractPayload(Action<string, int> report)
@@ -196,8 +290,18 @@ namespace PomodoroSetup
 
                     foreach (ZipArchiveEntry entry in zip.Entries)
                     {
+                        // zip 的顶层是 Pomodoro/，这里把这一段剥掉，直接解到 _destDir，
+                        // 这样目标目录叫什么名字都能装（Pomodoro / PomodoroApp / …）
                         string relative = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
-                        string target = Path.Combine(InstallRoot, relative);
+                        int cut = relative.IndexOf(Path.DirectorySeparatorChar);
+                        relative = cut >= 0 ? relative.Substring(cut + 1) : "";
+                        if (relative.Length == 0)
+                        {
+                            done++;
+                            continue;
+                        }
+
+                        string target = Path.Combine(_destDir, relative);
 
                         if (entry.Name.Length == 0)
                         {
@@ -213,12 +317,12 @@ namespace PomodoroSetup
                         done++;
                         if (done % 50 == 0 || done == total)
                             report(string.Format("正在解压… {0}/{1}", done, total),
-                                   5 + (int)(88.0 * done / Math.Max(1, total)));
+                                   8 + (int)(86.0 * done / Math.Max(1, total)));
                     }
                 }
             }
 
-            if (!File.Exists(TargetExe))
+            if (!File.Exists(_targetExe))
                 throw new InvalidOperationException("解压后没有找到 Pomodoro.exe");
         }
 
@@ -230,15 +334,15 @@ namespace PomodoroSetup
             object shell = Activator.CreateInstance(shellType);
 
             string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            MakeLink(shell, Path.Combine(desktop, AppName + ".lnk"), TargetExe, DestDir, TargetExe + ",0");
+            MakeLink(shell, Path.Combine(desktop, AppName + ".lnk"), _targetExe, _destDir, _targetExe + ",0");
 
             string startMenu = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName);
             Directory.CreateDirectory(startMenu);
-            MakeLink(shell, Path.Combine(startMenu, AppName + ".lnk"), TargetExe, DestDir, TargetExe + ",0");
+            MakeLink(shell, Path.Combine(startMenu, AppName + ".lnk"), _targetExe, _destDir, _targetExe + ",0");
 
-            string uninstall = Path.Combine(DestDir, "uninstall.cmd");
-            MakeLink(shell, Path.Combine(startMenu, "卸载.lnk"), uninstall, DestDir,
+            string uninstall = Path.Combine(_destDir, "uninstall.cmd");
+            MakeLink(shell, Path.Combine(startMenu, "卸载.lnk"), uninstall, _destDir,
                      Path.Combine(Environment.SystemDirectory, "shell32.dll") + ",131");
         }
 
@@ -258,10 +362,11 @@ namespace PomodoroSetup
 
         private static void WriteUninstaller()
         {
-            string ps1 = Path.Combine(DestDir, "uninstall.ps1");
+            string ps1 = Path.Combine(_destDir, "uninstall.ps1");
+            // 卸载脚本里的目录必须和实际安装位置一致，不能写死
             File.WriteAllText(ps1,
                 "$ErrorActionPreference = 'SilentlyContinue'\r\n" +
-                "$dest = Join-Path $env:LOCALAPPDATA 'Programs\\Pomodoro'\r\n" +
+                "$dest = '" + _destDir.Replace("'", "''") + "'\r\n" +
                 "$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) '" + AppName + ".lnk'\r\n" +
                 "$startMenu = Join-Path ([Environment]::GetFolderPath('Programs')) '" + AppName + "'\r\n" +
                 "Get-Process -Name Pomodoro | Stop-Process -Force\r\n" +
@@ -272,7 +377,7 @@ namespace PomodoroSetup
                 "Remove-Item $dest -Recurse -Force\r\n",
                 new System.Text.UTF8Encoding(true));
 
-            string cmd = Path.Combine(DestDir, "uninstall.cmd");
+            string cmd = Path.Combine(_destDir, "uninstall.cmd");
             File.WriteAllText(cmd,
                 "@echo off\r\n" +
                 "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0uninstall.ps1\"\r\n");
@@ -282,26 +387,45 @@ namespace PomodoroSetup
         {
             Process.Start(new ProcessStartInfo
             {
-                FileName = TargetExe,
-                WorkingDirectory = DestDir,
+                FileName = _targetExe,
+                WorkingDirectory = _destDir,
                 UseShellExecute = true
             });
         }
 
-        /// <summary>把详细异常写进日志，方便排查。</summary>
+        /// <summary>把详细异常写进日志。用户目录写不了就退到 exe 旁边、再退到 TEMP。</summary>
         private static void TryLog(string text)
         {
+            string body = "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "]\r\n" + text + "\r\n\r\n";
+            var targets = new System.Collections.Generic.List<string>();
             try
             {
-                string path = Path.Combine(
+                targets.Add(Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Pomodoro-Setup.log");
-                File.AppendAllText(path,
-                    "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "]\r\n" + text + "\r\n\r\n");
+                    "Pomodoro-Setup.log"));
             }
-            catch (Exception)
+            catch (Exception) { }
+            try
             {
-                // 日志都写不了就算了，别掩盖原始错误
+                targets.Add(Path.Combine(
+                    Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".",
+                    "Pomodoro-Setup.log"));
+            }
+            catch (Exception) { }
+            try { targets.Add(Path.Combine(Path.GetTempPath(), "Pomodoro-Setup.log")); }
+            catch (Exception) { }
+
+            foreach (string path in targets)
+            {
+                try
+                {
+                    File.AppendAllText(path, body);
+                    return;
+                }
+                catch (Exception)
+                {
+                    // 这个位置写不了，试下一个
+                }
             }
         }
     }
