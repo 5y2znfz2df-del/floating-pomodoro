@@ -119,10 +119,11 @@ powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
 
 它做的事：
 
-1. 解压到 `%LOCALAPPDATA%\Programs\Pomodoro`（用户目录，不需要管理员权限）
-2. 在**桌面**和**开始菜单**建「悬浮番茄钟」快捷方式
-3. 在开始菜单建「卸载」
-4. 装完直接启动程序
+1. **让你选安装位置**（默认自动挑一个能写的目录，也可以点「浏览…」自选）
+2. 解压到目标目录，不需要管理员权限
+3. 在**桌面**和**开始菜单**建「悬浮番茄钟」快捷方式
+4. 在开始菜单建「卸载」
+5. 装完直接启动程序
 
 ### 为什么不用 Inno Setup / NSIS
 
@@ -137,15 +138,17 @@ powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
 ### 静默安装 / 自定义目录
 
 ```powershell
-# 无界面安装，进度打在控制台
+# 图形界面：可以自己选目录（点「浏览…」）
+.\dist\Pomodoro-Setup.exe
+
+# 无界面安装，自动挑一个可写的目录
 .\dist\Pomodoro-Setup.exe --silent
 
-# 装到指定目录（绿色安装）
-$env:POMODORO_INSTALL_DIR = "D:\Apps\Pomodoro"
-.\dist\Pomodoro-Setup.exe --silent
+# 无界面安装到指定目录（绿色安装）
+.\dist\Pomodoro-Setup.exe --silent --dir "D:\Apps\Pomodoro"
 ```
 
-安装失败时详细报错会写进 `%LOCALAPPDATA%\Pomodoro-Setup.log`。
+安装失败时详细报错会写进 `%LOCALAPPDATA%\Pomodoro-Setup.log`（写不了会退到安装包所在目录或 `%TEMP%`）。
 
 ---
 
