@@ -1,0 +1,6 @@
+# 运行时依赖；0.28.3 把 Flutter 桌面客户端打进 wheel，
+# 首次启动不需要联网下载（1.0 以后改成运行时下载了）
+flet[all]==0.28.3
+
+# 打包 exe 用（`flet pack` 内部调用 PyInstaller）
+pyinstaller>=6.0

@@ -1,0 +1,21 @@
+# 虚拟环境与构建产物
+.venv/
+.venv-*/
+build/
+dist-debug/
+__pycache__/
+*.pyc
+*.spec
+
+# PyInstaller 单文件 exe 的解包残留（可用 `rd /s /q` 手动删除）
+.tmp*/
+.tmp2/
+
+# 本地调试截图
+tools/shot*.png
+
+# 安装包构建中间产物
+installer/staging/
+
+# 构建产物不进仓库（安装包走 Releases）
+dist/
