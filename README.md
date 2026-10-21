@@ -245,6 +245,14 @@ python tests\test_logic.py
 这是**单文件模式**的典型故障：它启动时要往 `%TEMP%` 里解压自己，被安全软件（火绒、Defender 等）
 或临时目录权限拦住了。解决办法：改用 `-D` 目录模式重新打包，或者把 exe 加进安全软件白名单。
 
+**安装时报「访问被拒绝」（对路径 `%LOCALAPPDATA%\Programs\Pomodoro` 的访问被拒绝）**
+安全软件拦住了这个未签名程序往用户目录写文件。三个办法：
+
+1. 打开火绒 → 安全日志/拦截记录，找到这条拦截，选择**允许**，再装一次；
+2. 用 `installer\portable-install.cmd`（或 dist 里的 `一键安装.cmd`）—— 它走 cmd + PowerShell
+   复制文件，这两个是系统组件，不会被拦；
+3. 干脆不装：直接双击 `Pomodoro\Pomodoro.exe`，绿色版不需要任何写入。
+
 **双击 exe 闪一下就没了**
 用 `flet pack ... --debug-console debug` 重新打包，看控制台输出。多数是杀毒软件拦截或缺少 VC 运行库。
 
