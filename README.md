@@ -117,6 +117,8 @@ powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
 
 产物：`dist\Pomodoro-Setup.exe`（约 90 MB）——**就一个文件**，双击即装。
 
+![安装程序](docs/screenshot-setup.png)
+
 它做的事：
 
 1. **让你选安装位置**（默认自动挑一个能写的目录，也可以点「浏览…」自选）
