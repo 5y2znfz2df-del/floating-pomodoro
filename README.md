@@ -89,24 +89,42 @@ Copy-Item flet_win_effects .\your_project\ -Recurse   # 2. 把包目录拷进项
 > Windows 已保护你的电脑 —— **未知发布者**
 
 这不是病毒报告，只是"这个 exe 没有付费证书"的意思。个人项目买代码签名证书
-（每年一两千到上万不等）成本太高，所以这里选择把它说清楚：
+（每年一两千到上万不等）成本太高，所以这里选择用别的方式把信任讲清楚。
 
-1. 弹窗里点 **更多信息** → **仍要运行**
-2. 不放心就校验哈希（Release 里附了 `.sha256` 文件）：
+### 校验哈希
 
-   ```powershell
-   Get-FileHash .\Pomodoro-Setup.exe -Algorithm SHA256
-   # 对照 Release 页面上的值，一致就是完整下载
-   ```
+| 文件 | SHA256 |
+| --- | --- |
+| `Pomodoro-Setup.exe`（安装版，93.9 MB） | `0a4eed7be057676215df93cc08e5d9b44787c37c8dbad0d2e60ff550ddbbd9b7` |
+| `Pomodoro-1.0.2-win-x64.zip`（绿色版，89.2 MB） | `69b3fee26657daeceb63c3ae660386c9c2b055fddd104f83607262a66b4129eb` |
 
-3. 还是不想装 exe —— 直接跑源码，一行都不需要信任二进制：
+```powershell
+Get-FileHash .\Pomodoro-Setup.exe -Algorithm SHA256
+```
 
-   ```powershell
-   pip install -r requirements.txt
-   python app.py
-   ```
+下载后对一遍，一致就说明文件完整、没被中间人替换。
+
+### 用 winget 安装
+
+```powershell
+winget install XiangFu.FloatingPomodoro
+```
+
+winget 会校验官方清单里记录的哈希，装完还能 `winget upgrade` / `winget uninstall`。
+（清单已提交到 [microsoft/winget-pkgs #458843](https://github.com/microsoft/winget-pkgs/pull/458843)，审核通过后可用。）
+
+### 还是不想信任二进制
+
+直接跑源码，一行都不用相信 exe：
+
+```powershell
+pip install -r requirements.txt
+python app.py
+```
 
 这个程序**不联网、不写注册表、不读用户文件**，装完在任何时候删掉目录就等于卸载干净。
+
+## How it works
 
 ## How it works
 
