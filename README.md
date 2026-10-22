@@ -82,6 +82,32 @@ Copy-Item flet_win_effects .\your_project\ -Recurse   # 2. 把包目录拷进项
 
 ---
 
+## 关于「未知发布者」提示
+
+安装包**没有数字签名**，所以 Windows 第一次运行时会弹：
+
+> Windows 已保护你的电脑 —— **未知发布者**
+
+这不是病毒报告，只是"这个 exe 没有付费证书"的意思。个人项目买代码签名证书
+（每年一两千到上万不等）成本太高，所以这里选择把它说清楚：
+
+1. 弹窗里点 **更多信息** → **仍要运行**
+2. 不放心就校验哈希（Release 里附了 `.sha256` 文件）：
+
+   ```powershell
+   Get-FileHash .\Pomodoro-Setup.exe -Algorithm SHA256
+   # 对照 Release 页面上的值，一致就是完整下载
+   ```
+
+3. 还是不想装 exe —— 直接跑源码，一行都不需要信任二进制：
+
+   ```powershell
+   pip install -r requirements.txt
+   python app.py
+   ```
+
+这个程序**不联网、不写注册表、不读用户文件**，装完在任何时候删掉目录就等于卸载干净。
+
 ## How it works
 
 ### 亚克力模糊

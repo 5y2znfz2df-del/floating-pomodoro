@@ -20,6 +20,19 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
+// 版本信息：没有这些，文件属性里 Company/Product 都是空的、版本显示 0.0.0.0，
+// 双击时"未知发布者"会显得更像可疑程序。填上之后资源管理器里能看到产品名和公司名。
+[assembly: AssemblyTitle("悬浮番茄钟 安装程序")]
+[assembly: AssemblyDescription("flet-win-effects / 悬浮番茄钟 安装程序")]
+[assembly: AssemblyProduct("flet-win-effects · 悬浮番茄钟")]
+[assembly: AssemblyCompany("XiangFu")]
+[assembly: AssemblyCopyright("MIT License © 2026 XiangFu")]
+[assembly: AssemblyTrademark("")]
+[assembly: AssemblyCulture("")]
+[assembly: AssemblyVersion("1.0.2.0")]
+[assembly: AssemblyFileVersion("1.0.2.0")]
+[assembly: AssemblyInformationalVersion("1.0.2")]
+
 namespace PomodoroSetup
 {
     internal static class Program
