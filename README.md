@@ -104,6 +104,26 @@ Get-FileHash .\Pomodoro-Setup.exe -Algorithm SHA256
 
 下载后对一遍，一致就说明文件完整、没被中间人替换。
 
+### 杀毒扫描结果（VirusTotal）
+
+[安装版报告](https://www.virustotal.com/gui/file/0a4eed7be057676215df93cc08e5d9b44787c37c8dbad0d2e60ff550ddbbd9b7) ·
+[绿色版报告](https://www.virustotal.com/gui/file/69b3fee26657daeceb63c3ae660386c9c2b055fddd104f83607262a66b4129eb)
+
+75 个引擎里 **64 家未检出**，4 家标了恶意 —— 但都不是特征码查杀：
+
+| 引擎 | 报的名字 | 实际是什么 |
+| --- | --- | --- |
+| Bkav | `W32.Malware.502AA11` | 出了名地误报 PyInstaller 打出来的程序 |
+| Cylance | `Unsafe` | 纯机器学习打分，没有签名匹配 |
+| McAfeeD | `ti!0A4EED7BE057` | `ti!` 是**信誉分低**（下载量少），不是一个病毒名 |
+| Trapmine | `malicious.high.ml.score` | 同上，ML 分数 |
+
+**微软自家引擎、卡巴斯基、ESET、BitDefender、Sophos、Symantec、Avast、腾讯、Fortinet、
+趋势、Paloalto、CrowdStrike、SentinelOne 全部未检出。**
+
+这 4 个误报的根源是 PyInstaller 的启动器特征（所有 PyInstaller 程序都会被这么报），
+不是这个程序的行为。微软 winget 官方的 `07. Installers Scan` 检查也是通过的。
+
 ### 用 winget 安装
 
 ```powershell
